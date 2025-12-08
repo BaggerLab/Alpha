@@ -45,7 +45,7 @@ datasets/
 *.pem
 *.key
 *.json
-apikey.txt
+*.txt
 
 # ─────────────────────────────
 # OS / IDE Files
