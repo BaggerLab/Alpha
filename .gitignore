@@ -40,6 +40,7 @@ logs/
 # 데이터 파일 (OHLCV, 주문로그 등)
 data/
 datasets/
+DB/
 
 # 비공개 키 / 인증
 *.pem
