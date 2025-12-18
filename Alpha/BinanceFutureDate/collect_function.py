@@ -43,10 +43,45 @@ def parse_dt_utc(s: str, is_end: bool = False) -> datetime:
     return dt.replace(tzinfo=timezone.utc)
 
 
+def ms_to_kst_dt(ms_series: pd.Series) -> pd.Series:
+
+    # UTC(ms) -> tz-aware KST datetime
+    # 한국 시간 변환
+    return pd.to_datetime(ms_series, unit="ms", utc=True).dt.tz_convert("Asia/Seoul")
+
+
+def split_date_time(df: pd.DataFrame, kst_dt_col: str) -> pd.DataFrame:
+
+    # DATE: YYYY.MM.DD
+    df["DATE"] = df[kst_dt_col].dt.strftime("%Y.%m.%d")
+    # TIME: HH:MM
+    df["TIME"] = df[kst_dt_col].dt.strftime("%H:%M")
+
+    return df
+
+
+# -------------------------
+# Symbols
+def fetch_symbols(FUTURES_URL: str):
+
+    url = f"{FUTURES_URL}/fapi/v1/exchangeInfo"
+    data = http_get(url, {})
+
+    return [
+        s["symbol"]
+        for s in data["symbols"]
+        # 현재 거래 가능한 USDT 기반 무기한 선물(PERPETUAL) 심볼 리스트 반환
+        if s["contractType"] == "PERPETUAL"  # 선물
+        and s["quoteAsset"] == "USDT"  # USDT 기반
+        and s["status"] == "TRADING"  # 거래 가능한
+    ]
+
+
 # -------------------------
 # FS utils
 def ensure_dir(path: str):
     os.makedirs(path, exist_ok=True)
+
 
 # -------------------------
 # HTTP
@@ -73,6 +108,7 @@ def http_get(url: str, params: dict, max_retries: int = 5):
 
     raise RuntimeError(f"GET failed: {url} params={params} err={last_err}")
 
+
 # -------------------------
 # CSV save
 def save_csv_append(df: pd.DataFrame, out_path: str):
@@ -81,3 +117,25 @@ def save_csv_append(df: pd.DataFrame, out_path: str):
     header = not os.path.exists(out_path)
     df.to_csv(out_path, mode="a", header=header, index=False)
     print(f"[append] {out_path} rows={len(df)}")
+
+
+# 중복 제거 및 정렬
+def save_csv_upsert_sorted(
+    df: pd.DataFrame,
+    path: str,
+    key_cols: list[str],
+    sort_cols: list[str],
+) -> None:
+    if df.empty:
+        return
+
+    try:
+        old = pd.read_csv(path)
+        merged = pd.concat([old, df], ignore_index=True)
+    except FileNotFoundError:
+        merged = df.copy()
+
+    merged = merged.drop_duplicates(subset=key_cols, keep="last")
+    merged = merged.sort_values(sort_cols).reset_index(drop=True)
+
+    merged.to_csv(path, index=False, encoding="utf-8-sig")
