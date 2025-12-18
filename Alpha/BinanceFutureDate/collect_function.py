@@ -117,3 +117,25 @@ def save_csv_append(df: pd.DataFrame, out_path: str):
     header = not os.path.exists(out_path)
     df.to_csv(out_path, mode="a", header=header, index=False)
     print(f"[append] {out_path} rows={len(df)}")
+
+
+# 중복 제거 및 정렬
+def save_csv_upsert_sorted(
+    df: pd.DataFrame,
+    path: str,
+    key_cols: list[str],
+    sort_cols: list[str],
+) -> None:
+    if df.empty:
+        return
+
+    try:
+        old = pd.read_csv(path)
+        merged = pd.concat([old, df], ignore_index=True)
+    except FileNotFoundError:
+        merged = df.copy()
+
+    merged = merged.drop_duplicates(subset=key_cols, keep="last")
+    merged = merged.sort_values(sort_cols).reset_index(drop=True)
+
+    merged.to_csv(path, index=False, encoding="utf-8-sig")

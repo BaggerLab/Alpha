@@ -230,11 +230,21 @@ def fetch_oi(symbol: str, interval: str, start_ms: int, end_ms: int) -> pd.DataF
 if __name__ == "__main__":
     FUNC.ensure_dir(OUT_DIR)
 
-    start_dt = FUNC.parse_dt_utc("2025-11-30")
+    # 현재 날짜
     end_dt = FUNC.now_utc()
+    # 시작 날짜 (현재 기준 14일 전)
+    start_dt = end_dt - pd.Timedelta(days=14)
 
     start_ms = FUNC.utc_ms(start_dt)
     end_ms = FUNC.utc_ms(end_dt)
+
+    KEY_COLS = ["COIN", "SYMBOL", "INTERVAL", "DATE", "TIME"]
+    SORT_COLS = [
+        "COIN",
+        "INTERVAL",
+        "DATE",
+        "TIME",
+    ]
 
     kline_path = f"{OUT_DIR}/kline.csv"
     funding_path = f"{OUT_DIR}/funding.csv"
@@ -245,14 +255,14 @@ if __name__ == "__main__":
         print(f"[FORWARD] {sym}")
 
         df_f = fetch_funding(sym, start_ms, end_ms)
-        FUNC.save_csv_append(df_f, funding_path)
+        FUNC.save_csv_upsert_sorted(df_f, funding_path, KEY_COLS, SORT_COLS)
 
         for iv in OI_INTERVALS:
             df_oi = fetch_oi(sym, iv, start_ms, end_ms)
-            FUNC.save_csv_append(df_oi, oi_path)
+            FUNC.save_csv_upsert_sorted(df_oi, oi_path, KEY_COLS, SORT_COLS)
 
         for iv in KLINE_INTERVALS:
             df_k = fetch_klines(sym, iv, start_ms, end_ms)
-            FUNC.save_csv_append(df_k, kline_path)
+            FUNC.save_csv_upsert_sorted(df_k, kline_path, KEY_COLS, SORT_COLS)
 
         time.sleep(0.3)
