@@ -1,12 +1,22 @@
 import time
 import pandas as pd
-import collect_function as FUNC
+import Alpha.Function.collect_data_function as FUNC
+
+"""
+파일 실행방법: mac: python3 -m Alpha.BinanceFutureData.collect_backtest_data
+파일 실행방법: window: python -m Alpha.BinanceFutureData.collect_backtest_data
+"""
+
+"""
+바이낸스는 최근 30일 기준의 OI만 호출 가능
+Liquidation은 미제공
+>> Funding과 캔들데이터만 불러오는 스크립트
+"""
 
 FUTURES_URL = "https://fapi.binance.com"
-OUT_DIR = "./DB/forwardTest"
+OUT_DIR = "./DB/backtest"
 
 KLINE_INTERVALS = ["1h", "4h", "1d"]
-OI_INTERVALS = ["1h", "4h", "1d"]
 FUNDING_INTERVAL = "8h"
 
 # 비트, 이더리움, 리플, 솔라나, BNB
@@ -16,10 +26,14 @@ TARGET_SYMBOLS = [c + "USDT" for c in COINS]
 
 # ---------- Kline ----------
 # VOLUME: 기초 자산 기준 거래량
-# QUOTE_ASSET_VOLUME: USDT 기준 거래대금 (VOLUME x 평균 가격)
+# QUOTE_VOLUME: USDT 기준 거래대금 (VOLUME x 체결 가격)
 # NUM_TRADES: 해당 캔들 내 총 체결 횟수 (체결 건수)
 # TAKER_BUY_BASE_VOLUME: 매수자가 시장가로 체결한 수량 (매수 주도 세기)
 # TAKER_BUY_QUOTE_VOLUME: TAKER_BUY_BASE_VOLUME x 체결가(USDT)
+# BUY_VOLUME: TAKER_BUY_BASE_VOLUME
+# SELL_VOLUME: (VOLUME - TAKER_BUY_BASE_VOLUME)
+# DELTA_VOLUME: (BUY_VOLUME - SELL_VOLUME) = (2 × BUY_VOLUME) - VOLUME
+# CVD: 누적 합(DELTA_VOLUME)
 def fetch_klines(
     symbol: str, interval: str, start_ms: int, end_ms: int
 ) -> pd.DataFrame:
@@ -77,7 +91,7 @@ def fetch_klines(
     # df["DATE"], df["TIME"] 추가
     df = FUNC.split_date_time(df, "DT_KST")
 
-    # 숫자형 변환
+    # 숫자 변환
     num_cols = [
         "OPEN",
         "HIGH",
@@ -114,7 +128,7 @@ def fetch_klines(
 
 # ---------- Funding ----------
 # FUNDING_RATE: 펀딩비
-def fetch_funding(symbol: str, start_ms: int, end_ms: int) -> pd.DataFrame:
+def fetch_funding(symbol, start_ms, end_ms):
     url = f"{FUTURES_URL}/fapi/v1/fundingRate"
     rows, cur = [], start_ms
 
@@ -142,6 +156,7 @@ def fetch_funding(symbol: str, start_ms: int, end_ms: int) -> pd.DataFrame:
 
     df = pd.DataFrame(rows)
 
+    # 대문자 + 스키마 정리
     df.rename(
         columns={
             "symbol": "SYMBOL",
@@ -171,98 +186,25 @@ def fetch_funding(symbol: str, start_ms: int, end_ms: int) -> pd.DataFrame:
     return df[out_cols]
 
 
-# ---------- Open Interest ----------
-# SUM_OPEN_INTEREST: 미체결약정 총합 (단위: 코인 수량)
-# SUM_OPEN_INTEREST_VALUE: 미결제약정의 명목가치; SUM_OPEN_INTEREST x 가격
-def fetch_oi(symbol: str, interval: str, start_ms: int, end_ms: int) -> pd.DataFrame:
-    # OI는 바이낸스 정책상 최근 30일만 제공될 수 있음
-    url = f"{FUTURES_URL}/futures/data/openInterestHist"
-    data = FUNC.http_get(
-        url,
-        {
-            "symbol": symbol,
-            "period": interval,
-            "startTime": start_ms,
-            "endTime": end_ms,
-            "limit": 500,
-        },
-    )
-    if not data:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(data)
-
-    # 반환 컬럼 예: symbol, sumOpenInterest, sumOpenInterestValue, timestamp
-    df.rename(
-        columns={
-            "symbol": "SYMBOL",
-            "sumOpenInterest": "SUM_OPEN_INTEREST",
-            "sumOpenInterestValue": "SUM_OPEN_INTEREST_VALUE",
-            "timestamp": "TIMESTAMP_MS",
-        },
-        inplace=True,
-    )
-
-    df["SYMBOL"] = symbol
-    df["COIN"] = symbol.replace("USDT", "")
-    df["INTERVAL"] = interval.upper()
-
-    df["DT_KST"] = FUNC.ms_to_kst_dt(df["TIMESTAMP_MS"])
-    df = FUNC.split_date_time(df, "DT_KST")
-
-    df["SUM_OPEN_INTEREST"] = pd.to_numeric(df["SUM_OPEN_INTEREST"], errors="coerce")
-    df["SUM_OPEN_INTEREST_VALUE"] = pd.to_numeric(
-        df["SUM_OPEN_INTEREST_VALUE"], errors="coerce"
-    )
-
-    out_cols = [
-        "COIN",
-        "SYMBOL",
-        "INTERVAL",
-        "DATE",
-        "TIME",
-        "SUM_OPEN_INTEREST",
-        "SUM_OPEN_INTEREST_VALUE",
-    ]
-    return df[out_cols]
-
-
 if __name__ == "__main__":
     FUNC.ensure_dir(OUT_DIR)
 
-    # 현재 날짜
-    end_dt = FUNC.now_utc()
-    # 시작 날짜 (현재 기준 14일 전)
-    start_dt = end_dt - pd.Timedelta(days=14)
+    start_dt = FUNC.parse_dt_utc("2020-01-01")
+    end_dt = FUNC.parse_dt_utc("2025-11-30", is_end=True)
 
     start_ms = FUNC.utc_ms(start_dt)
     end_ms = FUNC.utc_ms(end_dt)
 
-    KEY_COLS = ["COIN", "SYMBOL", "INTERVAL", "DATE", "TIME"]
-    SORT_COLS = [
-        "COIN",
-        "INTERVAL",
-        "DATE",
-        "TIME",
-    ]
-
-    kline_path = f"{OUT_DIR}/kline.csv"
-    funding_path = f"{OUT_DIR}/funding.csv"
-    oi_path = f"{OUT_DIR}/oi.csv"
+    kline_path = f"{OUT_DIR}/future_kline.csv"
+    funding_path = f"{OUT_DIR}/future_funding.csv"
 
     # 심볼 필터
     for sym in TARGET_SYMBOLS:
-        print(f"[FORWARD] {sym}")
+        print(f"[FUTURE] {sym}")
 
         df_f = fetch_funding(sym, start_ms, end_ms)
-        FUNC.save_csv_upsert_sorted(df_f, funding_path, KEY_COLS, SORT_COLS)
-
-        for iv in OI_INTERVALS:
-            df_oi = fetch_oi(sym, iv, start_ms, end_ms)
-            FUNC.save_csv_upsert_sorted(df_oi, oi_path, KEY_COLS, SORT_COLS)
+        FUNC.save_csv_append(df_f, funding_path)
 
         for iv in KLINE_INTERVALS:
             df_k = fetch_klines(sym, iv, start_ms, end_ms)
-            FUNC.save_csv_upsert_sorted(df_k, kline_path, KEY_COLS, SORT_COLS)
-
-        time.sleep(0.3)
+            FUNC.save_csv_append(df_k, kline_path)
